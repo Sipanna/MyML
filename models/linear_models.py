@@ -37,19 +37,7 @@ class RidgeRegression:
     def predict(self, X_test):
         return X_test @ self.weights + self.bias
     
-
-class LassoRegression:
-    
-    def __init__(self, alpha = 0.01):
-        self.alpha = alpha
-        
-    def fit(self, X, y):
-        pass
-    
-    def predict(self, X):
-        pass
-    
-   
+  
     
 class GDRegression:
     

@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.metrics.pairwise import rbf_kernel
 
 #Через градиентный спуск
 class LinearSVM:
@@ -35,7 +36,7 @@ class LinearSVM:
 #Simplified SMO    
 class KernelSVM_SSMO:
     
-    def __init__(self, C = 0.5, kernel='linear', degree = 2, max_passes = 30, tol = 0.001, gamma = 1):
+    def __init__(self, C = 0.5, kernel='linear', degree = 2, max_passes = 30, tol = 0.01, gamma = 1):
         self.max_passes = max_passes
         self.C = C
         self.tol = tol
@@ -83,7 +84,6 @@ class KernelSVM_SSMO:
                     K11 = self.K(X[i], X[i])
                     K22 = self.K(X[j], X[j])
                     K12 = self.K(X[i], X[j])
-                    
                     eta = K11 + K22 - 2*K12
                     if eta <= 0:
                         continue
@@ -121,7 +121,7 @@ class KernelSVM_SSMO:
         self.lambdas, self.b = self.find_lambdas(X, y)
         
     def get_params(self):
-        w =  np.sum(self.X.T *(self.y * self.lambdas), axis = 1)
+        w =  np.sum(self.X.T *(self.y * self.lambdas), axis = 0)
         return self.b, w    
 
     def predict(self, X_test):
@@ -132,13 +132,13 @@ class KernelSVM_SSMO:
     
 class KernelSVM_SMO:
     
-    def __init__(self, C = 0.5, kernel='linear', degree = 2,  tol = 0.001, gamma = 1):
+    def __init__(self, C = 0.05, kernel='linear', degree = 2,  tol = 0.01, gamma = 1):
         self.C = C
         self.tol = tol
         self.degree = degree
         self.gamma = gamma
         self.K = {'poly'  : lambda x,y: np.dot(x, y.T)**degree,
-         'rbf': lambda x,y: np.exp(-gamma*np.sum((y-x[:,np.newaxis])**2,axis=-1)),
+         'rbf': lambda x,y:np.exp(-gamma*np.sum((y-x[:, np.newaxis])**2, axis = -1)),
          'linear': lambda x,y: np.dot(x, y.T)}[kernel]
         
         
@@ -155,11 +155,14 @@ class KernelSVM_SMO:
     
         
     def take_step(self, i1, i2):
+        print("i1, i2", (i1, i2))
         if i1 == i2:
             return False
+        
         E1 = self.get_error(i1)
         y1 = self.y[i1]
         X1 = self.X[i1]
+        print("y1, y2", (y1, self.y2))
         lambda1_old = self.lambdas[i1]
         lambda2_old = self.lambdas[i2]
         if y1 == self.y2:
@@ -170,26 +173,28 @@ class KernelSVM_SMO:
             H = min(self.C, self.C - lambda1_old + lambda2_old)
         if L == H:
             return False
-                    
-        K11 = self.K(X1, X1)
-        K22 = self.K(self.X2, self.X2)
-        K12 = self.K(X1, self.X2)
-                    
+                 
+        K11 = self.K(X1.reshape(1, -1), X1.reshape(1, -1))
+        K22 = self.K(self.X2.reshape(1, -1), self.X2.reshape(1, -1))
+        K12 = self.K(X1.reshape(1, -1), self.X2.reshape(1, -1))
+        
+        print("K11, K12, K22", (K11, K12, K22))            
         eta = K11 + K22 - 2*K12
         if eta <= 0:
             return False
         
         self.lambdas[i2] = lambda2_old  + self.y2*(E1 - self.E2)/eta
+        print("Lambda2", self.lambdas[i2])
         if self.lambdas[i2] > H:
             self.lambdas[i2] = H
         elif self.lambdas[i2] < L:
             self.lambdas[i2] = L
-            
+        print("Lambda2 clipped", self.lambdas[i2])    
         if abs(self.lambdas[i2] - lambda2_old) < self.eps * (self.lambdas[i2] + lambda2_old + self.eps):
             return False
                         
         self.lambdas[i1] = lambda1_old + y1*self.y2* (lambda2_old - self.lambdas[i2])
-                    
+        print("Lambda1", self.lambdas[i1])            
                     
         b1 = self.b + y1*K11*(self.lambdas[i1] - lambda1_old) + self.y2*K12*(self.lambdas[i2] - lambda2_old) + E1
         b2 = self.b + y1*K12*(self.lambdas[i1] - lambda1_old) + self.y2*K22*(self.lambdas[i2] - lambda2_old) + self.E2
@@ -203,16 +208,18 @@ class KernelSVM_SMO:
         delta_b = new_b - self.b
         self.b = new_b
         
+        print("newf", (self.f(i1), self.f(i2)))
         delta1 = y1 * (self.lambdas[i1] - lambda1_old)
         delta2 = self.y2 * (self.lambdas[i2] - lambda2_old)
         
         for i in range(self.m):
             if 0 < self.lambdas[i] < self.C:
-                self.errors[i] += delta1 * self.K(X1, self.X[i]) + delta2 * self.K(self.X2, self.X[i]) - delta_b
+                self.errors[i] += delta1 * self.K(X1.reshape(1, -1), self.X[i].reshape(1, -1)) + delta2 * self.K(self.X2.reshape(1, -1), self.X[i].reshape(1, -1)) - delta_b
         
              
         self.errors[i1] = 0
         self.errors[i2] = 0
+        self.track_f.append(self.decision_function(self.X))
         return True
     
     def second_heuristic(self, non_bound_indices):
@@ -238,30 +245,30 @@ class KernelSVM_SMO:
 
         if not ((r2 < -self.tol and lambda2 < self.C) or (r2 > self.tol and lambda2 > 0)):
             # Условия ККТ выполняются, нужен другой индекс
-            return False
+            return 0
 
         #Вторая эвристика 1 - выбор множителя с максимальной ошибкой
         non_bound_idx = list(self.get_non_bound_indexes())
         i1 = self.second_heuristic(non_bound_idx)
 
         if i1 >= 0 and self.take_step(i1, i2):
-            return True
+            return 1
 
         # Вторая эвристика 2 - Если нет таких множителей, то цикл из рандомной точки по всем не граничным lambda
         if len(non_bound_idx) > 0:
             rand_i = np.random.randint(len(non_bound_idx))
             for i1 in non_bound_idx[rand_i:] + non_bound_idx[:rand_i]:
                 if self.take_step(i1, i2):
-                    return True
+                    return 1
 
         # Вторая эвристика 3 - Цикл из рандомной точки по всем lambda
         rand_i = np.random.randint(self.m)
         all_indices = list(range(self.m))
         for i1 in all_indices[rand_i:] + all_indices[:rand_i]:
             if self.take_step(i1, i2):
-                return True
+                return 1
 
-        return False
+        return 0
     
     def get_non_bound_indexes(self):
         return np.where(np.logical_and(self.lambdas> 0,
@@ -304,15 +311,21 @@ class KernelSVM_SMO:
         self.m = X.shape[0]
         self.errors = np.zeros(self.m)
         self.lambdas = np.zeros(self.m)
-        self.eps = 1E-5
+        self.eps = 1E-3
         self.b = 0
+        self.track_f = []
         self.main_routine()
+        
         
     def get_params(self):
         w =  np.sum(self.X.T *(self.y * self.lambdas), axis = 1)
-        return self.b, w    
+        return self.b, w, self.lambdas, self.track_f
+    
+    def decision_function(self, X_test):
+        res = (np.sum(self.K(X_test, self.X) * self.y * self.lambdas, axis=1) - self.b).reshape(X_test.shape[0])
+        return  res
 
     def predict(self, X_test):
-        y_pred = np.sum(self.K(X_test, self.X) * self.y * self.lambdas, axis=1) - self.b
-        print (y_pred)
+        y_pred = (np.sum(self.K(X_test, self.X) * self.y * self.lambdas, axis=1) - self.b).reshape(X_test.shape[0])
+        print('Y_pred', y_pred)
         return [1 if yi>=0 else -1 for yi in y_pred]
